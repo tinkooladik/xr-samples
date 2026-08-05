@@ -1,6 +1,61 @@
+<!--
+  ~ Copyright 2024 The Android Open Source Project
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~     https://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+
 <resources>
-    <string name="app_name">XR Sandbox</string>
-    <string name="hello_android_xr">Hello Android XR.</string>
-    <string name="switch_to_home_space_mode">Switch to Home Space Mode</string>
-    <string name="switch_to_full_space_mode">Switch to Full Space Mode</string>
+    <string name="app_name">Hello Android XR</string>
+    <string name="enter_home_space_mode">enter home space mode</string>
+    <string name="enter_full_space_mode">enter full space mode</string>
+    <string name="primary_content">Primary content</string>
+    <string name="block_of_content_1">Block of Content\n1</string>
+    <string name="block_of_content_2">Block of Content\n2</string>
+    <string name="search_is_not_implemented">Searching for %s (not implemented)</string>
+    <string name="search_product_name">Search Product Name</string>
+    <string name="set_virtual_environment">set virtual environment</string>
+    <string name="set_passthrough">set passthrough</string>
+    <string name="show_bugdroid">Show bugdroid</string>
+    <string name="hide_bugdroid">Hide bugdroid</string>
+    <string name="animate_bugdroid">Animate Bugdroid</string>
+    <string name="stop_animation_bugdroid">Stop Animation</string>
+    <string name="scale">Scale</string>
+    <string name="rotation">Rotation</string>
+    <string name="offset">Offset</string>
+    <string name="x_rotation">Rotate on X axis</string>
+    <string name="y_rotation">Rotate on Y axis</string>
+    <string name="z_rotation">Rotate on Z axis</string>
+    <string name="w_rotation">Rotate on W axis</string>
+    <string name="x_offset">Offset on X axis</string>
+    <string name="y_offset">Offset on Y axis</string>
+    <string name="z_offset">Offset on Z axis</string>
+    <string name="change_scale">Change the Model\'s Scale</string>
+    <string name="change_rotation">Change the Model\'s Rotation</string>
+    <string name="change_offset">Change the Model\'s Offset</string>
+    <string name="reset">Reset Model</string>
+    <string name="material">Material</string>
+    <string name="material_color">Material Base Colors</string>
+    <string name="material_properties">Material Properties</string>
+    <string name="texture">Texture</string>
+    <string name="change_material_color">Change the Model\'s Base Color Material</string>
+    <string name="change_material_factors">Change the Model\'s Material Properties</string>
+    <string name="r_material">R:</string>
+    <string name="g_material">G:</string>
+    <string name="b_material">B:</string>
+    <string name="a_material">A:</string>
+    <string name="coming_soon">Coming Soon!</string>
+    <string name="ambient">Ambient Occlusion</string>
+    <string name="metallic">Metallic Factor</string>
+    <string name="roughness">Roughness</string>
+    <string name="please_select">Please select one of the buttons to choose which properties to adjust.</string>
 </resources>
