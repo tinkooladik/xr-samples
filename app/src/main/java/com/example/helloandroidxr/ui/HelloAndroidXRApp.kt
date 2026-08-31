@@ -80,9 +80,10 @@ import com.example.helloandroidxr.R
 import com.example.helloandroidxr.ui.components.BugdroidControls
 import com.example.helloandroidxr.ui.components.BugdroidModel
 import com.example.helloandroidxr.ui.components.BugdroidSliderControls
+import com.example.helloandroidxr.ui.components.CardListPane
 import com.example.helloandroidxr.ui.components.EnvironmentControls
 import com.example.helloandroidxr.ui.components.SearchBar
-import com.example.helloandroidxr.ui.components.TextPane
+import com.example.helloandroidxr.ui.components.sampleCardItems
 import com.example.helloandroidxr.ui.theme.HelloAndroidXRTheme
 import com.example.helloandroidxr.viewmodel.BugdroidUiState
 import com.example.helloandroidxr.viewmodel.BugdroidViewModel
@@ -394,8 +395,9 @@ private fun PrimaryContent(
             }
         }
     } else {
-        TextPane(
-            text = stringResource(R.string.primary_content),
+        CardListPane(
+            title = stringResource(R.string.primary_content),
+            items = sampleCardItems,
             modifier = modifier.clip(RoundedCornerShape(16.dp))
         )
     }
@@ -418,7 +420,11 @@ private fun BlockOfContentOne(
             modifier = modifier
         )
     } else {
-        TextPane(stringResource(R.string.block_of_content_1), modifier = modifier.fillMaxHeight())
+        CardListPane(
+            title = stringResource(R.string.block_of_content_1),
+            items = sampleCardItems.take(6),
+            modifier = modifier.fillMaxHeight()
+        )
     }
 }
 
@@ -445,7 +451,11 @@ private fun BlockOfContentTwo(
             modifier = modifier
         )
     } else {
-        TextPane(stringResource(R.string.block_of_content_2), modifier = modifier.fillMaxHeight())
+        CardListPane(
+            title = stringResource(R.string.block_of_content_2),
+            items = sampleCardItems.drop(6),
+            modifier = modifier.fillMaxHeight()
+        )
     }
 }
 
