@@ -16,25 +16,39 @@
 
 package com.example.helloandroidxr.ui.components
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
@@ -50,38 +64,107 @@ fun CardListPane(
     modifier: Modifier = Modifier,
 ) {
     var selectedTitle by remember { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
+    val density = LocalDensity.current
     Surface(modifier = modifier.fillMaxSize()) {
         LazyColumn(
+            state = listState,
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
                 Text(text = title, style = MaterialTheme.typography.headlineSmall)
             }
-            items(items) { item ->
+            items(items, key = { it.title }) { item ->
                 val isSelected = item.title == selectedTitle
-                // The gaze highlight is drawn by the system, only on elements the UI framework
-                // reports as interactable — a non-clickable Card never lights up.
-                Card(
-                    onClick = { selectedTitle = if (isSelected) null else item.title },
-                    colors = if (isSelected) {
-                        CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                val interaction = remember { MutableInteractionSource() }
+                val hovered by interaction.collectIsHoveredAsState()
+                val cut by remember(listState, item.title) {
+                    derivedStateOf { listState.layoutInfo.viewportCut(item.title) }
+                }
+                Box(Modifier.fillMaxWidth()) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            // Pointer and hand-ray hover reach the app, so this outline is ours to
+                            // draw and follows the card shape. Gaze hover never does — there the
+                            // system draws its own generic highlight and the app has no say.
+                            .then(
+                                if (hovered) {
+                                    Modifier.border(2.dp, MaterialTheme.colorScheme.outline, CardShape)
+                                } else {
+                                    Modifier
+                                }
+                            ),
+                        shape = CardShape,
+                        colors = cardColors(isSelected),
+                    ) {
+                        CardBody(item)
+                    }
+                    // The system's gaze highlight follows the interactable element's own bounds and
+                    // ignores the list clip, so a click on the full-height Card would light up
+                    // outside the panel. The Card stays inert; this overlay carries the click,
+                    // shrunk to the slice of the card that is actually inside the viewport.
+                    cut?.let { (topPx, bottomPx) ->
+                        Spacer(
+                            Modifier
+                                .matchParentSize()
+                                .padding(
+                                    top = with(density) { topPx.toDp() },
+                                    bottom = with(density) { bottomPx.toDp() },
+                                )
+                                .clip(sliceShape(topPx, bottomPx))
+                                .clickable(
+                                    interactionSource = interaction,
+                                    indication = ripple(),
+                                ) {
+                                    selectedTitle = if (isSelected) null else item.title
+                                }
+                                .semantics {
+                                    contentDescription = item.title
+                                    selected = isSelected
+                                }
                         )
-                    } else {
-                        CardDefaults.cardColors()
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics { selected = isSelected },
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(text = item.title, style = MaterialTheme.typography.titleMedium)
-                        Text(text = item.body, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
         }
+    }
+}
+
+private val CardShape = RoundedCornerShape(12.dp)
+
+/** [CardShape] squared off at whichever edge the viewport cuts, so the slice matches the card. */
+private fun sliceShape(topCut: Int, bottomCut: Int) = RoundedCornerShape(
+    topStart = if (topCut > 0) 0.dp else 12.dp,
+    topEnd = if (topCut > 0) 0.dp else 12.dp,
+    bottomStart = if (bottomCut > 0) 0.dp else 12.dp,
+    bottomEnd = if (bottomCut > 0) 0.dp else 12.dp,
+)
+
+/**
+ * Pixels of [key]'s item hidden past the top and bottom viewport edges, or null when the item is
+ * composed but not on screen. [viewportStartOffset] and [viewportEndOffset] already span the
+ * content padding, which items scroll through and are drawn in.
+ */
+private fun LazyListLayoutInfo.viewportCut(key: Any): Pair<Int, Int>? {
+    val item = visibleItemsInfo.firstOrNull { it.key == key } ?: return null
+    return (viewportStartOffset - item.offset).coerceAtLeast(0) to
+        (item.offset + item.size - viewportEndOffset).coerceAtLeast(0)
+}
+
+@Composable
+private fun cardColors(isSelected: Boolean) = if (isSelected) {
+    CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+} else {
+    CardDefaults.cardColors()
+}
+
+@Composable
+private fun CardBody(item: CardItem) {
+    Column(Modifier.padding(16.dp)) {
+        Text(text = item.title, style = MaterialTheme.typography.titleMedium)
+        Text(text = item.body, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
