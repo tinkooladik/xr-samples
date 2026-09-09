@@ -58,4 +58,6 @@
     <string name="metallic">Metallic Factor</string>
     <string name="roughness">Roughness</string>
     <string name="please_select">Please select one of the buttons to choose which properties to adjust.</string>
+    <string name="card_more_options">More options for %s</string>
+    <string name="card_more_options_clicked">More options: %s</string>
 </resources>
