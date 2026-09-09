@@ -19,8 +19,8 @@
     <string name="enter_home_space_mode">enter home space mode</string>
     <string name="enter_full_space_mode">enter full space mode</string>
     <string name="primary_content">Primary content</string>
-    <string name="block_of_content_1">Block of Content\n1</string>
-    <string name="block_of_content_2">Block of Content\n2</string>
+    <string name="block_of_content_1">Block of Content 1</string>
+    <string name="block_of_content_2">Block of Content 2</string>
     <string name="search_is_not_implemented">Searching for %s (not implemented)</string>
     <string name="search_product_name">Search Product Name</string>
     <string name="set_virtual_environment">set virtual environment</string>
@@ -58,4 +58,6 @@
     <string name="metallic">Metallic Factor</string>
     <string name="roughness">Roughness</string>
     <string name="please_select">Please select one of the buttons to choose which properties to adjust.</string>
+    <string name="card_more_options">More options for %s</string>
+    <string name="card_more_options_clicked">More options: %s</string>
 </resources>
