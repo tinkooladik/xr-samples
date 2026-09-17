@@ -65,6 +65,8 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.adaptive.android)
+    implementation(libs.androidx.adaptive.layout)
+    implementation(libs.androidx.material3)
     implementation(libs.androidx.concurrent.futures)
     implementation(libs.androidx.compose.runtime)
     implementation(libs.androidx.activity.compose)
