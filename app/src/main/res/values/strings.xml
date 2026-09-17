@@ -18,6 +18,7 @@
     <string name="app_name">Hello Android XR</string>
     <string name="enter_home_space_mode">enter home space mode</string>
     <string name="enter_full_space_mode">enter full space mode</string>
+    <string name="share">share</string>
     <string name="primary_content">Primary content</string>
     <string name="block_of_content_1">Block of Content 1</string>
     <string name="block_of_content_2">Block of Content 2</string>

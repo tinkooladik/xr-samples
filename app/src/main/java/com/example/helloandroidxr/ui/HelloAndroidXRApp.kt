@@ -16,7 +16,9 @@
 
 package com.example.helloandroidxr.ui
 
+import android.content.Intent
 import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.background
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
@@ -31,12 +33,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -45,16 +51,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.dimensionResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.window.core.layout.WindowSizeClass
+import androidx.xr.compose.platform.LocalSession
 import androidx.xr.compose.platform.LocalSpatialCapabilities
 import androidx.xr.compose.platform.LocalSpatialConfiguration
 import androidx.xr.compose.spatial.ContentEdge
@@ -70,11 +82,13 @@ import androidx.xr.compose.subspace.layout.fillMaxWidth
 import androidx.xr.compose.subspace.layout.height
 import androidx.xr.compose.subspace.layout.movable
 import androidx.xr.compose.subspace.layout.offset
+import androidx.xr.compose.subspace.layout.onGloballyPositioned
 import androidx.xr.compose.subspace.layout.padding
-import androidx.xr.compose.subspace.layout.resizable
 import androidx.xr.compose.subspace.layout.rotate
 import androidx.xr.compose.subspace.layout.size
 import androidx.xr.compose.subspace.layout.width
+import androidx.xr.runtime.math.IntSize2d
+import androidx.xr.scenecore.scene
 import androidx.xr.runtime.math.Quaternion
 import com.example.helloandroidxr.R
 import com.example.helloandroidxr.ui.components.BugdroidControls
@@ -174,25 +188,43 @@ private fun SpatialLayout(
             )
         }
     }
+    // System dialogs (permission prompts, share sheet) render into the activity's main panel,
+    // which Subspace disables — without this they stay invisible until home space. Losing
+    // window focus means a dialog is on top of us; size the panel to the layout so its scrim
+    // lines up with the app.
+    val session = LocalSession.current
+    var mainPanelSize by remember { mutableStateOf(IntSize2d(0, 0)) }
+    val isWindowFocused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(isWindowFocused, session, mainPanelSize) {
+        val mainPanel = session?.scene?.mainPanelEntity ?: return@LaunchedEffect
+        // Enabling the panel resets its size, so re-apply it on every toggle.
+        if (mainPanelSize.width > 0) mainPanel.sizeInPixels = mainPanelSize
+        mainPanel.setEnabled(!isWindowFocused)
+    }
+
     Subspace {
-        SpatialRow(modifier = SubspaceModifier.height(816.dp).fillMaxWidth()) {
+        SpatialRow(
+            modifier = SubspaceModifier
+                .height(816.dp)
+                .fillMaxWidth()
+                .movable()
+                .onGloballyPositioned { coordinates ->
+                    mainPanelSize = IntSize2d(coordinates.size.width, coordinates.size.height)
+                }
+        ) {
             SpatialColumn(modifier = SubspaceModifier.width(400.dp)) {
                 SpatialPanel(
                     SubspaceModifier
                         .alpha(animatedAlpha.value)
                         .size(400.dp)
-                        .padding(bottom = 16.dp)
-                        .movable()
-                        .resizable(),
+                        .padding(bottom = 16.dp),
                 ) {
                     firstSupportingContent()
                 }
                 SpatialPanel(
                     SubspaceModifier
                         .alpha(animatedAlpha.value)
-                        .weight(1f)
-                        .movable()
-                        .resizable(),
+                        .weight(1f),
                 ) {
                     secondSupportingContent()
                 }
@@ -201,9 +233,7 @@ private fun SpatialLayout(
                 modifier = SubspaceModifier
                     .alpha(animatedAlpha.value)
                     .fillMaxSize()
-                    .padding(end = 16.dp)
-                    .movable()
-                    .resizable(),
+                    .padding(end = 16.dp),
             ) {
                 Column {
                     TopAppBar()
@@ -328,7 +358,38 @@ private fun TopAppBar() {
             offset = dimensionResource(R.dimen.top_ornament_padding),
             alignment = Alignment.End
         ) {
-            EnvironmentControls()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (LocalSpatialCapabilities.current.isSpatialUiEnabled) {
+                    ShareButton()
+                    Spacer(Modifier.width(8.dp))
+                }
+                EnvironmentControls()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShareButton() {
+    val context = LocalContext.current
+    Surface(Modifier.clip(CircleShape)) {
+        IconButton(
+            onClick = {
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, "https://www.google.com")
+                }
+                context.startActivity(Intent.createChooser(send, null))
+            },
+            modifier = Modifier
+                .padding(16.dp)
+                .background(MaterialTheme.colorScheme.onSecondary, CircleShape)
+                .size(56.dp)
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.share_24px),
+                contentDescription = stringResource(R.string.share)
+            )
         }
     }
 }

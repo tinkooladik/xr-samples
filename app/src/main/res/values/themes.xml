@@ -16,5 +16,9 @@
   -->
 
 <resources>
-    <style name="Theme.HelloAndroidXR" parent="Theme.AppCompat.DayNight"/>
+    <style name="Theme.HelloAndroidXR" parent="Theme.AppCompat.DayNight">
+        <!-- The main panel only becomes visible to host system dialogs; an opaque window
+             background would draw a gray slab behind them. -->
+        <item name="android:windowBackground">@android:color/transparent</item>
+    </style>
 </resources>
