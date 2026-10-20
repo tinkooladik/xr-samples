@@ -18,7 +18,6 @@ import androidx.xr.compose.spatial.Subspace
 import androidx.xr.compose.subspace.SceneCoreEntity
 import androidx.xr.compose.subspace.SpatialPanel
 import androidx.xr.compose.subspace.draw.alpha
-import androidx.xr.compose.subspace.draw.scale
 import androidx.xr.compose.subspace.layout.SubspaceModifier
 import androidx.xr.compose.subspace.layout.height
 import androidx.xr.compose.subspace.layout.offset
@@ -84,9 +83,11 @@ fun SpatialLaunch(ready: Boolean, onFinished: () -> Unit) {
             val start = withFrameNanos { it }
             player?.start()
             var fadeStart = -1f
+            var frame = 0
             while (true) {
                 val t = (withFrameNanos { it } - start) / 1e9f
-                time = t
+                // The glow panel is a full-size redraw; half rate is plenty for a breathing blur.
+                if (frame++ % 2 == 0) time = t
                 if (fadeStart < 0f && isReady && t >= LaunchTimeline.DURATION) fadeStart = t
                 fade = if (fadeStart < 0f) min(1f, t / LaunchTimeline.FADE_IN) else 1f - (t - fadeStart) / FADE_OUT
                 parts.apply(t, fade.coerceIn(0f, 1f))
@@ -101,13 +102,12 @@ fun SpatialLaunch(ready: Boolean, onFinished: () -> Unit) {
     Subspace {
         SpatialPanel(
             SubspaceModifier
-                .width(Meter(LaunchGlow.WIDTH / LaunchGlow.PANEL_SCALE).toDp())
-                .height(Meter(LaunchGlow.HEIGHT / LaunchGlow.PANEL_SCALE).toDp())
+                .width(Meter(LaunchGlow.WIDTH).toDp())
+                .height(Meter(LaunchGlow.HEIGHT).toDp())
                 .offset(z = Meter(GLOW_Z).toDp())
-                .scale(LaunchGlow.PANEL_SCALE)
                 .alpha(fade.coerceIn(0f, 1f)),
         ) {
-            LaunchGlowPanel(time)
+            LaunchGlow.Panel(time)
         }
         SceneCoreEntity(factory = { root })
     }
