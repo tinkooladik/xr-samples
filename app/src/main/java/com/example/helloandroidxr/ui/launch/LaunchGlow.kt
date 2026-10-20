@@ -1,18 +1,14 @@
 package com.example.helloandroidxr.ui.launch
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.graphics.graphicsLayer
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.min
@@ -29,11 +25,6 @@ internal object LaunchGlow {
     const val WIDTH = 3.2f
     const val HEIGHT = 3.2f
 
-    /**
-     * The blooms are rasterised at this fraction of the panel and magnified inside it. Magnifying the
-     * panel itself instead shows its texel grid on the headset; a soft bloom has no detail worth the pixels.
-     */
-    private const val RASTER_SCALE = 4f
 
     private val red = Color(0.839f, 0.027f, 0.216f)
     private val amber = Color(0.949f, 0.580f, 0.039f)
@@ -172,20 +163,10 @@ internal object LaunchGlow {
     private const val UNIT = 100f
     private const val TAU = (2 * PI).toFloat()
 
+    // Shaded per panel pixel on purpose: any magnified raster (scaled panel or offscreen layer) shows
+    // its texel grid on the headset.
     @Composable
     fun Panel(time: Float) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Canvas(
-                Modifier
-                    .fillMaxSize(1f / RASTER_SCALE)
-                    .graphicsLayer {
-                        scaleX = RASTER_SCALE
-                        scaleY = RASTER_SCALE
-                        compositingStrategy = CompositingStrategy.Offscreen
-                    },
-            ) {
-                drawGlow(time)
-            }
-        }
+        Canvas(Modifier.fillMaxSize()) { drawGlow(time) }
     }
 }
