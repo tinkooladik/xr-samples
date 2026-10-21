@@ -5,10 +5,16 @@ Inputs (from dtv-rbtv-apple branch tbarrett/DPSSTPL-9075-spatial-launch):
   RBTV_Launch_Sun_NN.png       61 swoosh frames painted on the 900x397 canvas
 
 Outputs:
-  models/launch_<part>.glb     extruded, mesh-centred on the logo plane (z in [-d/2, d/2])
-  textures/sun_NN.png          unique swoosh frames unwrapped onto a 512x256 equirect map
-  stdout                       the frame -> texture index table to paste into Kotlin
+  models/launch_<part>_face.glb   the part's front face, at z = depth / 2
+  models/launch_<part>_walls.glb  its extrusion walls (and the slab's bevels), z in [-depth/2, depth/2]
+  models/launch_sun.glb           a UV sphere for the swoosh frames
+  textures/sun_NN.png             unique swoosh frames unwrapped onto a 512x256 equirect map
+  stdout                          the frame -> texture index table to paste into Kotlin
+
+A face and its walls are separate files on purpose: Impress orders the blended primitives of one mesh
+unpredictably, but sorts separate meshes back to front, and a part's face is always its nearest surface.
 """
+import io
 import json
 import math
 import struct
@@ -149,12 +155,15 @@ def walls(mb, material, rings, z_top, z_bottom):
             mb.quad(material, (p[0], p[1], z_top), (p[0], p[1], z_bottom), (q[0], q[1], z_bottom), (q[0], q[1], z_top), nrm)
 
 
-def extrude(polygons, depth, face_material, side_material):
+def face_mesh(polygons, z):
     mb = MeshBuilder()
-    h = depth / 2
-    cap(mb, face_material, polygons, h, flip=False)
-    cap(mb, face_material, polygons, -h, flip=True)
-    walls(mb, side_material, [r for outer, holes in polygons for r in [outer] + holes], h, -h)
+    cap(mb, 0, polygons, z, flip=False)
+    return mb
+
+
+def wall_mesh(polygons, z_top, z_bottom):
+    mb = MeshBuilder()
+    walls(mb, 0, [r for outer, holes in polygons for r in [outer] + holes], z_top, z_bottom)
     return mb
 
 
@@ -177,14 +186,13 @@ def inset_convex(ring, c):
     return out
 
 
-def extrude_beveled(ring, depth, chamfer, face_material, side_material, bevel_material):
-    """Convex ring only: flat faces, 45-degree chamfer on both edges, straight sides."""
-    mb = MeshBuilder()
+def slab_meshes(ring, depth, chamfer):
+    """Convex ring only: an inset front face, and straight sides (material 0) with 45-degree bevels (1)."""
     h = depth / 2
     inner = inset_convex(ring, chamfer)
-    cap(mb, face_material, [(inner, [])], h, flip=False)
-    cap(mb, face_material, [(inner, [])], -h, flip=True)
-    walls(mb, side_material, [ring], h - chamfer, -h + chamfer)
+    face = face_mesh([(inner, [])], h)
+    sides = MeshBuilder()
+    walls(sides, 0, [ring], h - chamfer, -h + chamfer)
     n = len(ring)
     for k in range(n):
         p, q, pi, qi = ring[k], ring[(k + 1) % n], inner[k], inner[(k + 1) % n]
@@ -192,9 +200,9 @@ def extrude_beveled(ring, depth, chamfer, face_material, side_material, bevel_ma
         length = math.hypot(dx, dy)
         nx, ny = dy / length, -dx / length
         s = math.sqrt(0.5)
-        mb.quad(bevel_material, (pi[0], pi[1], h), (p[0], p[1], h - chamfer), (q[0], q[1], h - chamfer), (qi[0], qi[1], h), (nx * s, ny * s, s))
-        mb.quad(bevel_material, (p[0], p[1], -h + chamfer), (pi[0], pi[1], -h), (qi[0], qi[1], -h), (q[0], q[1], -h + chamfer), (nx * s, ny * s, -s))
-    return mb
+        sides.quad(1, (pi[0], pi[1], h), (p[0], p[1], h - chamfer), (q[0], q[1], h - chamfer), (qi[0], qi[1], h), (nx * s, ny * s, s))
+        sides.quad(1, (p[0], p[1], -h + chamfer), (pi[0], pi[1], -h), (qi[0], qi[1], -h), (q[0], q[1], -h + chamfer), (nx * s, ny * s, -s))
+    return face, sides
 
 
 def uv_sphere(radius, material, stacks=48, slices=96):
@@ -335,20 +343,19 @@ def main(assets_dir, out_dir):
     def color_for(pred):
         return next(e["color"] for e in data["elements"] if pred(e["name"]))
 
+    def write_part(name, polygons, depth, face_material, wall_material):
+        h = depth / 2
+        write_glb(models / f"launch_{name}_face.glb", f"{name}_face", face_mesh(polygons, h), [face_material])
+        write_glb(models / f"launch_{name}_walls.glb", f"{name}_walls", wall_mesh(polygons, h, -h), [wall_material])
+
     is_outline = lambda n: n.startswith("bull/Group 7")
     is_body = lambda n: n.startswith("bull/") and not is_outline(n)
     is_letters = lambda n: n.startswith("tv/")
 
     white, red = color_for(is_outline), color_for(is_body)
-    write_glb(models / "launch_silhouette.glb", "silhouette",
-              extrude(group_rings(rings_for(is_outline)), 0.015, 0, 1),
-              [unlit("face", white), glossy("side", white, 0.45, 0.2)])
-    write_glb(models / "launch_bull.glb", "bull",
-              extrude(group_rings(rings_for(is_body)), 0.028, 0, 1),
-              [unlit("face", red), glossy("side", red, 0.26, 0.22)])
-    write_glb(models / "launch_letters.glb", "letters",
-              extrude(group_rings(rings_for(is_letters)), 0.014, 0, 1),
-              [unlit("face", [1, 1, 1]), glossy("side", [1, 1, 1], 0.3, 1.0)])
+    write_part("silhouette", group_rings(rings_for(is_outline)), 0.015, unlit("face", white), glossy("side", white, 0.45, 0.2))
+    write_part("bull", group_rings(rings_for(is_body)), 0.028, unlit("face", red), glossy("side", red, 0.26, 0.22))
+    write_part("letters", group_rings(rings_for(is_letters)), 0.014, unlit("face", [1, 1, 1]), glossy("side", [1, 1, 1], 0.3, 1.0))
 
     # Tim's rhombus, authored in a 468 px tall space, y up.
     s = logo_height / 468
@@ -356,9 +363,10 @@ def main(assets_dir, out_dir):
     if signed_area(rhombus) < 0:
         rhombus = rhombus[::-1]
     slab_red, slab_orange, slab_yellow = [0.86, 0.04, 0.25], [0.95, 0.58, 0.04], [0.98, 0.84, 0.04]
-    write_glb(models / "launch_slab.glb", "slab",
-              extrude_beveled(rhombus, 0.045, 0.005, 0, 1, 2),
-              [glossy("front", slab_red, 0.3, 0.3), glossy("side", slab_orange, 0.3), glossy("bevel", slab_yellow, 0.3)])
+    slab_face, slab_sides = slab_meshes(rhombus, 0.045, 0.005)
+    write_glb(models / "launch_slab_face.glb", "slab_face", slab_face, [glossy("front", slab_red, 0.3, 0.3)])
+    write_glb(models / "launch_slab_walls.glb", "slab_walls", slab_sides,
+              [glossy("side", slab_orange, 0.3), glossy("bevel", slab_yellow, 0.3)])
 
     table = unwrap_table()
     frames = sorted(assets_dir.glob("RBTV_Launch_Sun_*.png"))
@@ -380,7 +388,6 @@ def main(assets_dir, out_dir):
     print("sunFrameTexture = intArrayOf(" + ", ".join(map(str, mapping)) + ")")
 
     last = Image.open(textures / f"sun_{len(unique) - 1:02d}.png")
-    import io
     buf = io.BytesIO()
     last.save(buf, format="PNG")
     sun_material = {"name": "swoosh", "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1], "baseColorTexture": {"index": 0}, "metallicFactor": 0, "roughnessFactor": 1},

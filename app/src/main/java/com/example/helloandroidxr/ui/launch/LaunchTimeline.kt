@@ -20,7 +20,7 @@ internal object LaunchTimeline {
     private const val SLAB_END = 0.62f
     private const val SETTLE_END = 1.467f
 
-    // The extruder centres every mesh on the logo plane, so a part whose back face belongs at `depth`
+    // The generator centres every part on the logo plane, so a part whose back belongs at `depth`
     // sits at depth + extrusion / 2.
     private const val SILHOUETTE_Z = 0.016f + 0.015f / 2
     private const val BULL_Z = 0.030f + 0.028f / 2

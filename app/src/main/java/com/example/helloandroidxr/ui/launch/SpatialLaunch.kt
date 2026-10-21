@@ -128,13 +128,26 @@ private val SLAB_RED = Shade(0.86f, 0.04f, 0.25f, roughness = 0.3f, emissive = 0
 private val SLAB_ORANGE = Shade(0.95f, 0.58f, 0.04f, roughness = 0.3f)
 private val SLAB_YELLOW = Shade(0.98f, 0.84f, 0.04f, roughness = 0.3f)
 
+/**
+ * One extruded part as two entities moved together: its walls and, in front of them, its face.
+ *
+ * Impress orders the blended primitives of one mesh unpredictably but sorts separate meshes back to front,
+ * and the face is always the part's nearest surface, so split this way the layering holds from any angle.
+ */
+private class Part(private val walls: GltfModelEntity, private val face: GltfModelEntity) {
+    fun apply(t: LaunchTimeline.Transform) {
+        walls.apply(t)
+        face.apply(t)
+    }
+}
+
 private class LaunchScene(
     private val models: List<GltfModel>,
     private val logo: Entity,
-    private val slab: Entity,
-    private val silhouette: Entity,
-    private val bull: Entity,
-    private val letters: Entity,
+    private val slab: Part,
+    private val silhouette: Part,
+    private val bull: Part,
+    private val letters: Part,
     private val sun: GltfModelEntity,
     private val slabFront: KhronosPbrMaterial,
     private val sunMaterial: KhronosUnlitMaterial,
@@ -208,28 +221,39 @@ private class LaunchScene(
             val slabOrange = async { lit(session, SLAB_ORANGE) }
             val slabYellow = async { lit(session, SLAB_YELLOW) }
             val sunMaterial = async { KhronosUnlitMaterial.create(session, AlphaMode.BLEND) }
-            val models = listOf("slab", "silhouette", "bull", "letters", "sun").map { name ->
-                async { GltfModel.create(session, Paths.get("models/launch_$name.glb")) }
-            }
+            val names = listOf(
+                "slab_walls", "slab_face", "silhouette_walls", "silhouette_face",
+                "bull_walls", "bull_face", "letters_walls", "letters_face", "sun",
+            )
+            val models = names.map { name -> async { GltfModel.create(session, Paths.get("models/launch_$name.glb")) } }
             val textures = (0..SUN_FRAME_TEXTURE.max()).map { i ->
                 async { Texture.create(session, Paths.get("textures/sun_%02d.png".format(i))) }
             }
 
             val logo = Entity.create(session, "logo", Pose.Identity, root)
-            val (slab, silhouette, bull, letters, sun) = models.mapIndexed { i, model ->
-                val parent = if (i == 0) root else logo
-                val pose = if (i == 4) Pose(Vector3(LaunchTimeline.SUN_X, 0f, LaunchTimeline.SUN_Z)) else Pose.Identity
+            val entities = models.mapIndexed { i, model ->
+                val parent = if (names[i].startsWith("slab")) root else logo
+                val pose = if (names[i] == "sun") Pose(Vector3(LaunchTimeline.SUN_X, 0f, LaunchTimeline.SUN_Z)) else Pose.Identity
                 GltfModelEntity.create(session, model.await(), pose, parent)
             }
-            slab.override(slabRed.await(), slabOrange.await(), slabYellow.await())
-            silhouette.override(faceWhite.await(), sideWhite.await())
-            bull.override(faceRed.await(), sideRed.await())
-            letters.override(faceWhite.await(), sideWhite.await())
+            // Every material exists before any override is applied: doing both concurrently aborted Impress.
+            entities[0].override(slabOrange.await(), slabYellow.await())
+            entities[1].override(slabRed.await())
+            entities[2].override(sideWhite.await())
+            entities[3].override(faceWhite.await())
+            entities[4].override(sideRed.await())
+            entities[5].override(faceRed.await())
+            entities[6].override(sideWhite.await())
+            entities[7].override(faceWhite.await())
 
             LaunchScene(
                 models = models.map { it.await() },
                 logo = logo,
-                slab = slab, silhouette = silhouette, bull = bull, letters = letters, sun = sun,
+                slab = Part(entities[0], entities[1]),
+                silhouette = Part(entities[2], entities[3]),
+                bull = Part(entities[4], entities[5]),
+                letters = Part(entities[6], entities[7]),
+                sun = entities[8],
                 slabFront = slabRed.await(),
                 sunMaterial = sunMaterial.await(),
                 sunTextures = textures.map { it.await() },
@@ -248,7 +272,7 @@ private class LaunchScene(
                 setEmissiveFactor(shade.color * shade.emissive)
             }
 
-        /** Materials in glb primitive order: faces, sides, then the slab's bevel. */
+        /** Materials in glb primitive order (the slab's walls carry its sides, then bevels). */
         private fun GltfModelEntity.override(vararg materials: Material) {
             nodes.forEach { node -> materials.forEachIndexed { index, material -> node.setMaterialOverride(material, index) } }
         }
