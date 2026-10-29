@@ -5,7 +5,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -16,13 +15,6 @@ import androidx.xr.compose.platform.LocalSession
 import androidx.xr.compose.platform.LocalSpatialCapabilities
 import androidx.xr.compose.spatial.Subspace
 import androidx.xr.compose.subspace.SceneCoreEntity
-import androidx.xr.compose.subspace.SpatialPanel
-import androidx.xr.compose.subspace.draw.alpha
-import androidx.xr.compose.subspace.layout.SubspaceModifier
-import androidx.xr.compose.subspace.layout.height
-import androidx.xr.compose.subspace.layout.offset
-import androidx.xr.compose.subspace.layout.width
-import androidx.xr.compose.unit.Meter
 import androidx.xr.runtime.Session
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Quaternion
@@ -45,8 +37,13 @@ import java.nio.file.Paths
 import kotlin.math.min
 import kotlin.math.pow
 
-/** Glow panel sits this far behind the logo plane. */
+/** The farthest glow disc sits this far behind the logo plane; each nearer one steps [GLOW_STEP] forward. */
 private const val GLOW_Z = -0.04f
+private const val GLOW_STEP = 0.001f
+
+/** The bar keeps its blended material through the flash, which only that material can show. */
+private const val SLAB_FLASH_END = 0.4f
+
 private const val START_DELAY_MS = 300L
 private const val FADE_OUT = 0.28f
 
@@ -69,8 +66,6 @@ fun SpatialLaunch(ready: Boolean, onFinished: () -> Unit) {
     val isReady by rememberUpdatedState(ready)
     val root = remember(session) { Entity.create(session, "launch") }
     var scene by remember { mutableStateOf<LaunchScene?>(null) }
-    var time by remember { mutableFloatStateOf(-1f) }
-    var fade by remember { mutableFloatStateOf(1f) }
 
     LaunchedEffect(session) { scene = LaunchScene.load(session, root) }
     DisposableEffect(root) { onDispose { scene?.close(); root.dispose() } }
@@ -83,14 +78,11 @@ fun SpatialLaunch(ready: Boolean, onFinished: () -> Unit) {
             val start = withFrameNanos { it }
             player?.start()
             var fadeStart = -1f
-            var frame = 0
             while (true) {
                 val t = (withFrameNanos { it } - start) / 1e9f
-                // The glow panel is a full-size redraw; half rate is plenty for a breathing blur.
-                if (frame++ % 2 == 0) time = t
                 if (fadeStart < 0f && isReady && t >= LaunchTimeline.DURATION) fadeStart = t
-                fade = if (fadeStart < 0f) min(1f, t / LaunchTimeline.FADE_IN) else 1f - (t - fadeStart) / FADE_OUT
-                parts.apply(t, fade.coerceIn(0f, 1f))
+                val fade = (if (fadeStart < 0f) min(1f, t / LaunchTimeline.FADE_IN) else 1f - (t - fadeStart) / FADE_OUT).coerceIn(0f, 1f)
+                parts.apply(t, fade)
                 if (fade <= 0f) break
             }
         } finally {
@@ -99,18 +91,7 @@ fun SpatialLaunch(ready: Boolean, onFinished: () -> Unit) {
         onFinished()
     }
 
-    Subspace {
-        SpatialPanel(
-            SubspaceModifier
-                .width(Meter(LaunchGlow.WIDTH).toDp())
-                .height(Meter(LaunchGlow.HEIGHT).toDp())
-                .offset(z = Meter(GLOW_Z).toDp())
-                .alpha(fade.coerceIn(0f, 1f)),
-        ) {
-            LaunchGlow.Panel(time)
-        }
-        SceneCoreEntity(factory = { root })
-    }
+    Subspace { SceneCoreEntity(factory = { root }) }
 }
 
 /** A glb material re-created at runtime so its opacity can be driven per frame; sRGB colour as authored. */
@@ -141,6 +122,24 @@ private class Part(private val walls: GltfModelEntity, private val face: GltfMod
     }
 }
 
+/**
+ * The blended override materials of one entity, worn only while it fades.
+ *
+ * Blended materials never write depth, so a solid part keeps the glb's own opaque materials (baked with
+ * the same values): then the glow discs and anything else drawn later behind it fail the depth test.
+ */
+private class Overrides(private val entity: GltfModelEntity, private val materials: List<Material>) {
+    private var worn = false
+
+    fun wear(on: Boolean) {
+        if (on == worn) return
+        worn = on
+        entity.nodes.forEach { node ->
+            materials.forEachIndexed { i, material -> if (on) node.setMaterialOverride(material, i) else node.clearMaterialOverride(i) }
+        }
+    }
+}
+
 private class LaunchScene(
     private val models: List<GltfModel>,
     private val logo: Entity,
@@ -149,11 +148,15 @@ private class LaunchScene(
     private val bull: Part,
     private val letters: Part,
     private val sun: GltfModelEntity,
+    private val glow: List<GltfModelEntity>,
+    private val glowMaterials: List<Pair<Shade, KhronosUnlitMaterial>>,
     private val slabFront: KhronosPbrMaterial,
     private val sunMaterial: KhronosUnlitMaterial,
     private val sunTextures: List<Texture>,
     /** Every override material with its colour, so one opacity can be written through all of them. */
     private val tinted: List<Pair<Shade, Material>>,
+    private val slabOverrides: List<Overrides>,
+    private val markOverrides: List<Overrides>,
 ) {
     private var opacity = -1f
     private var sunOpacity = -1f
@@ -161,6 +164,9 @@ private class LaunchScene(
 
     fun apply(t: Float, fade: Float) {
         setOpacity(fade)
+        val fading = fade < 1f
+        markOverrides.forEach { it.wear(fading) }
+        slabOverrides.forEach { it.wear(fading || t < SLAB_FLASH_END) }
         slab.apply(LaunchTimeline.slab(t))
         slabFront.setEmissiveFactor(SLAB_RED.color * (0.3f + 1.1f * LaunchTimeline.slabFlash(t)))
 
@@ -170,6 +176,18 @@ private class LaunchScene(
         silhouette.apply(LaunchTimeline.silhouette(t))
         bull.apply(LaunchTimeline.bull(t))
         letters.apply(LaunchTimeline.letters(t))
+
+        // The glow is scene geometry rather than a panel or surface quad: the system composites those
+        // over Impress content whatever their depth, which put the blooms on top of the mark.
+        LaunchGlow.discs(t, fade).forEachIndexed { i, disc ->
+            glow[i].setEnabled(disc.alpha > 0f)
+            if (disc.alpha <= 0f) return@forEachIndexed
+            val spin = Quaternion.fromAxisAngle(Vector3(0f, 0f, 1f), disc.rotationDegrees)
+            glow[i].setPose(Pose(Vector3(disc.x, disc.y, GLOW_Z + GLOW_STEP * i), spin))
+            glow[i].setScale(Vector3(disc.radiusX, disc.radiusY, 1f))
+            val (shade, material) = glowMaterials[LaunchGlow.materialOf(i)]
+            material.setBaseColorFactor(Vector4(shade.color.x, shade.color.y, shade.color.z, disc.alpha))
+        }
 
         val frame = LaunchTimeline.sunFrame(t, SUN_FRAME_TEXTURE.size)
         val texture = SUN_FRAME_TEXTURE[frame]
@@ -202,6 +220,7 @@ private class LaunchScene(
     fun close() {
         sunTextures.forEach { it.close() }
         sunMaterial.close()
+        glowMaterials.forEach { it.second.close() }
         tinted.forEach { (_, material) ->
             when (material) {
                 is KhronosUnlitMaterial -> material.close()
@@ -213,19 +232,27 @@ private class LaunchScene(
 
     companion object {
         suspend fun load(session: Session, root: Entity): LaunchScene = coroutineScope {
-            val faceWhite = async { KhronosUnlitMaterial.create(session, AlphaMode.BLEND) }
-            val faceRed = async { KhronosUnlitMaterial.create(session, AlphaMode.BLEND) }
-            val sideWhite = async { lit(session, WHITE_LIT) }
-            val sideRed = async { lit(session, RED_LIT) }
-            val slabRed = async { lit(session, SLAB_RED) }
-            val slabOrange = async { lit(session, SLAB_ORANGE) }
-            val slabYellow = async { lit(session, SLAB_YELLOW) }
-            val sunMaterial = async { KhronosUnlitMaterial.create(session, AlphaMode.BLEND) }
+            // Materials are created one at a time and before anything else; concurrent creation aborts
+            // Impress with an unknown instance id.
+            val faceWhite = KhronosUnlitMaterial.create(session, AlphaMode.BLEND)
+            val faceRed = KhronosUnlitMaterial.create(session, AlphaMode.BLEND)
+            val sideWhite = lit(session, WHITE_LIT)
+            val sideRed = lit(session, RED_LIT)
+            val slabRed = lit(session, SLAB_RED)
+            val slabOrange = lit(session, SLAB_ORANGE)
+            val slabYellow = lit(session, SLAB_YELLOW)
+            val sunMaterial = KhronosUnlitMaterial.create(session, AlphaMode.BLEND)
+            val glowMaterials = LaunchGlow.colors.map { color ->
+                Shade(color.red, color.green, color.blue) to KhronosUnlitMaterial.create(session, AlphaMode.BLEND)
+            }
+            fun model(name: String) = async { GltfModel.create(session, Paths.get("models/launch_$name.glb")) }
             val names = listOf(
                 "slab_walls", "slab_face", "silhouette_walls", "silhouette_face",
                 "bull_walls", "bull_face", "letters_walls", "letters_face", "sun",
             )
-            val models = names.map { name -> async { GltfModel.create(session, Paths.get("models/launch_$name.glb")) } }
+            val models = names.map(::model)
+            val aurora = model("aurora")
+            val bloom = model("bloom")
             val textures = (0..SUN_FRAME_TEXTURE.max()).map { i ->
                 async { Texture.create(session, Paths.get("textures/sun_%02d.png".format(i))) }
             }
@@ -236,32 +263,44 @@ private class LaunchScene(
                 val pose = if (names[i] == "sun") Pose(Vector3(LaunchTimeline.SUN_X, 0f, LaunchTimeline.SUN_Z)) else Pose.Identity
                 GltfModelEntity.create(session, model.await(), pose, parent)
             }
-            // Every material exists before any override is applied: doing both concurrently aborted Impress.
-            entities[0].override(slabOrange.await(), slabYellow.await())
-            entities[1].override(slabRed.await())
-            entities[2].override(sideWhite.await())
-            entities[3].override(faceWhite.await())
-            entities[4].override(sideRed.await())
-            entities[5].override(faceRed.await())
-            entities[6].override(sideWhite.await())
-            entities[7].override(faceWhite.await())
+            val glow = List(LaunchGlow.DISC_COUNT) { i ->
+                GltfModelEntity.create(session, (if (LaunchGlow.isAurora(i)) aurora else bloom).await(), Pose.Identity, root)
+            }
+            // Materials in glb primitive order (the slab's walls carry its sides, then bevels).
+            val slabOverrides = listOf(
+                Overrides(entities[0], listOf(slabOrange, slabYellow)),
+                Overrides(entities[1], listOf(slabRed)),
+            )
+            val markOverrides = listOf(
+                Overrides(entities[2], listOf(sideWhite)), Overrides(entities[3], listOf(faceWhite)),
+                Overrides(entities[4], listOf(sideRed)), Overrides(entities[5], listOf(faceRed)),
+                Overrides(entities[6], listOf(sideWhite)), Overrides(entities[7], listOf(faceWhite)),
+            )
+            (slabOverrides + markOverrides).forEach { it.wear(true) }
+            glow.forEachIndexed { i, disc ->
+                disc.nodes.forEach { it.setMaterialOverride(glowMaterials[LaunchGlow.materialOf(i)].second) }
+            }
 
             LaunchScene(
-                models = models.map { it.await() },
+                models = (models + aurora + bloom).map { it.await() },
                 logo = logo,
                 slab = Part(entities[0], entities[1]),
                 silhouette = Part(entities[2], entities[3]),
                 bull = Part(entities[4], entities[5]),
                 letters = Part(entities[6], entities[7]),
                 sun = entities[8],
-                slabFront = slabRed.await(),
-                sunMaterial = sunMaterial.await(),
+                glow = glow,
+                glowMaterials = glowMaterials,
+                slabFront = slabRed,
+                sunMaterial = sunMaterial,
                 sunTextures = textures.map { it.await() },
                 tinted = listOf(
-                    WHITE to faceWhite.await(), RED to faceRed.await(),
-                    WHITE_LIT to sideWhite.await(), RED_LIT to sideRed.await(),
-                    SLAB_RED to slabRed.await(), SLAB_ORANGE to slabOrange.await(), SLAB_YELLOW to slabYellow.await(),
+                    WHITE to faceWhite, RED to faceRed,
+                    WHITE_LIT to sideWhite, RED_LIT to sideRed,
+                    SLAB_RED to slabRed, SLAB_ORANGE to slabOrange, SLAB_YELLOW to slabYellow,
                 ),
+                slabOverrides = slabOverrides,
+                markOverrides = markOverrides,
             ).also { it.apply(0f, 0f) }
         }
 
@@ -271,11 +310,6 @@ private class LaunchScene(
                 setRoughnessFactor(shade.roughness)
                 setEmissiveFactor(shade.color * shade.emissive)
             }
-
-        /** Materials in glb primitive order (the slab's walls carry its sides, then bevels). */
-        private fun GltfModelEntity.override(vararg materials: Material) {
-            nodes.forEach { node -> materials.forEachIndexed { index, material -> node.setMaterialOverride(material, index) } }
-        }
     }
 }
 

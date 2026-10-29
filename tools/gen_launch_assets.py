@@ -8,6 +8,7 @@ Outputs:
   models/launch_<part>_face.glb   the part's front face, at z = depth / 2
   models/launch_<part>_walls.glb  its extrusion walls (and the slab's bevels), z in [-depth/2, depth/2]
   models/launch_sun.glb           a UV sphere for the swoosh frames
+  models/launch_{aurora,bloom}.glb  unit discs for the glow, their radial falloff baked into vertex alpha
   textures/sun_NN.png             unique swoosh frames unwrapped onto a 512x256 equirect map
   stdout                          the frame -> texture index table to paste into Kotlin
 
@@ -225,6 +226,30 @@ def uv_sphere(radius, material, stacks=48, slices=96):
     return mb
 
 
+def disc_mesh(falloff, rings=64, segments=64):
+    """A unit disc facing +z whose vertex alpha falls off as (1 - r)^falloff, interpolated per fragment."""
+    pos, col, idx = [(0.0, 0.0, 0.0)], [(1.0, 1.0, 1.0, 1.0)], []
+    for k in range(1, rings + 1):
+        r = k / rings
+        for s in range(segments):
+            a = 2 * math.pi * s / segments
+            pos.append((r * math.cos(a), r * math.sin(a), 0.0))
+            col.append((1.0, 1.0, 1.0, (1 - r) ** falloff))
+
+    def v(k, s):
+        return 0 if k == 0 else 1 + (k - 1) * segments + s % segments
+
+    for k in range(1, rings + 1):
+        for s in range(segments):
+            if k == 1:
+                idx += [0, v(1, s), v(1, s + 1)]
+            else:
+                idx += [v(k - 1, s), v(k, s), v(k, s + 1), v(k - 1, s), v(k, s + 1), v(k - 1, s + 1)]
+    mb = MeshBuilder()
+    mb.prims[0] = {"pos": pos, "nrm": [(0.0, 0.0, 1.0)] * len(pos), "uv": [], "col": col, "idx": idx}
+    return mb
+
+
 # --- glb ------------------------------------------------------------------
 
 def write_glb(path, name, mb, materials, image_png=None):
@@ -238,10 +263,12 @@ def write_glb(path, name, mb, materials, image_png=None):
         blob.extend(data)
         return len(views) - 1
 
-    def accessor(data, comp_type, type_, count, target, minmax=None):
+    def accessor(data, comp_type, type_, count, target, minmax=None, normalized=False):
         acc = {"bufferView": view(data, target), "componentType": comp_type, "count": count, "type": type_}
         if minmax:
             acc["min"], acc["max"] = minmax
+        if normalized:
+            acc["normalized"] = True
         accessors.append(acc)
         return len(accessors) - 1
 
@@ -254,6 +281,9 @@ def write_glb(path, name, mb, materials, image_png=None):
         }
         if image_png is not None:
             attrs["TEXCOORD_0"] = accessor(np.array(p["uv"], dtype=np.float32).tobytes(), 5126, "VEC2", len(pos), 34962)
+        if p.get("col"):
+            col = np.rint(np.array(p["col"], dtype=np.float64) * 65535).astype(np.uint16)
+            attrs["COLOR_0"] = accessor(col.tobytes(), 5123, "VEC4", len(pos), 34962, normalized=True)
         idx = np.array(p["idx"], dtype=np.uint32)
         primitives.append({"attributes": attrs, "indices": accessor(idx.tobytes(), 5125, "SCALAR", len(idx), 34963), "material": material})
 
@@ -353,9 +383,10 @@ def main(assets_dir, out_dir):
     is_letters = lambda n: n.startswith("tv/")
 
     white, red = color_for(is_outline), color_for(is_body)
-    write_part("silhouette", group_rings(rings_for(is_outline)), 0.015, unlit("face", white), glossy("side", white, 0.45, 0.2))
+    # Material values match the runtime shades in SpatialLaunch.kt, which take over while a part fades.
+    write_part("silhouette", group_rings(rings_for(is_outline)), 0.015, unlit("face", white), glossy("side", white, 0.4, 0.5))
     write_part("bull", group_rings(rings_for(is_body)), 0.028, unlit("face", red), glossy("side", red, 0.26, 0.22))
-    write_part("letters", group_rings(rings_for(is_letters)), 0.014, unlit("face", [1, 1, 1]), glossy("side", [1, 1, 1], 0.3, 1.0))
+    write_part("letters", group_rings(rings_for(is_letters)), 0.014, unlit("face", [1, 1, 1]), glossy("side", [1, 1, 1], 0.4, 0.5))
 
     # Tim's rhombus, authored in a 468 px tall space, y up.
     s = logo_height / 468
@@ -367,6 +398,10 @@ def main(assets_dir, out_dir):
     write_glb(models / "launch_slab_face.glb", "slab_face", slab_face, [glossy("front", slab_red, 0.3, 0.3)])
     write_glb(models / "launch_slab_walls.glb", "slab_walls", slab_sides,
               [glossy("side", slab_orange, 0.3), glossy("bevel", slab_yellow, 0.3)])
+
+    glow = {**unlit("glow", [1, 1, 1]), "alphaMode": "BLEND"}
+    write_glb(models / "launch_aurora.glb", "aurora", disc_mesh(1.85), [glow])
+    write_glb(models / "launch_bloom.glb", "bloom", disc_mesh(3), [glow])
 
     table = unwrap_table()
     frames = sorted(assets_dir.glob("RBTV_Launch_Sun_*.png"))
