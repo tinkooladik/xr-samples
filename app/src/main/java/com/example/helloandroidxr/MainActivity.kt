@@ -20,8 +20,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.example.helloandroidxr.ui.HelloAndroidXRApp
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.example.helloandroidxr.ui.CurvedWingsDemo
+import com.example.helloandroidxr.ui.launch.SpatialLaunch
 import com.example.helloandroidxr.ui.theme.HelloAndroidXRTheme
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,7 +36,15 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             HelloAndroidXRTheme {
-                HelloAndroidXRApp()
+                var launched by remember { mutableStateOf(false) }
+                if (launched) {
+                    CurvedWingsDemo()
+                } else {
+                    // Stands in for the app's data load: the mark holds until this flips.
+                    var ready by remember { mutableStateOf(false) }
+                    LaunchedEffect(Unit) { delay(8_000); ready = true }
+                    SpatialLaunch(ready = ready, onFinished = { launched = true })
+                }
             }
         }
     }

@@ -16,5 +16,8 @@
   -->
 
 <resources>
-    <style name="Theme.HelloAndroidXR" parent="Theme.AppCompat.DayNight"/>
+    <style name="Theme.HelloAndroidXR" parent="Theme.AppCompat.DayNight">
+        <!-- No system splash panel: the launch animation is the splash. -->
+        <item name="android:windowDisablePreview">true</item>
+    </style>
 </resources>
