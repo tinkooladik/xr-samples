@@ -7,9 +7,9 @@ Inputs (from dtv-rbtv-apple branch tbarrett/DPSSTPL-9075-spatial-launch):
 Outputs:
   models/launch_<part>_face.glb   the part's front face, at z = depth / 2
   models/launch_<part>_walls.glb  its extrusion walls (and the slab's bevels), z in [-depth/2, depth/2]
-  models/launch_sun.glb           a UV sphere for the swoosh frames
+  models/launch_sun.glb           the front half of a UV sphere for the swoosh frames
   models/launch_{aurora,bloom}.glb  unit discs for the glow, their radial falloff baked into vertex alpha
-  textures/sun_NN.png             unique swoosh frames unwrapped onto a 512x256 equirect map
+  textures/sun_NN.png             unique swoosh frames, the front hemisphere unwrapped onto a 256x256 map, one 256-colour palette for all
   stdout                          the frame -> texture index table to paste into Kotlin
 
 A face and its walls are separate files on purpose: Impress orders the blended primitives of one mesh
@@ -28,9 +28,10 @@ from PIL import Image
 
 LOGO_WIDTH = 0.6  # metres; Tim's depths below were tuned for a logo about this wide
 SEGMENTS_PER_SPAN = 10
+OUTLINE_TOLERANCE = 0.00025  # metres; outline points this close to the previous kept one are dropped
 SUN_ART_CENTER = (475.0, 198.5)
 SUN_ART_RADIUS = 100.0
-SUN_MAP_SIZE = 512
+SUN_MAP_SIZE = 256
 
 
 def srgb_to_linear(c):
@@ -59,15 +60,15 @@ def flatten(bezier, to_point):
             x = u ** 3 * a[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t ** 3 * b[0]
             y = u ** 3 * a[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t ** 3 * b[1]
             pts.append(to_point(x, y))
-    return dedupe(pts)
+    return dedupe(pts, OUTLINE_TOLERANCE)
 
 
-def dedupe(pts, eps=1e-6):
+def dedupe(pts, eps):
     out = []
     for p in pts:
-        if not out or abs(p[0] - out[-1][0]) > eps or abs(p[1] - out[-1][1]) > eps:
+        if not out or math.dist(p, out[-1]) > eps:
             out.append(p)
-    if len(out) > 1 and abs(out[0][0] - out[-1][0]) < eps and abs(out[0][1] - out[-1][1]) < eps:
+    if len(out) > 1 and math.dist(out[0], out[-1]) <= eps:
         out.pop()
     return out
 
@@ -108,25 +109,28 @@ def group_rings(rings):
 
 class MeshBuilder:
     def __init__(self):
-        self.prims = {}  # material index -> dict(pos, nrm, uv, idx)
+        self.prims = {}  # material index -> dict(pos, nrm, uv, idx, seen)
 
     def prim(self, material):
-        return self.prims.setdefault(material, {"pos": [], "nrm": [], "uv": [], "idx": []})
+        return self.prims.setdefault(material, {"pos": [], "nrm": [], "uv": [], "idx": [], "seen": {}})
 
-    def tri(self, material, a, b, c, n, uvs=None):
+    def tri(self, material, a, b, c, n=None):
+        """Vertices with the same position and normal are shared; n=None leaves the mesh without normals (unlit)."""
         p = self.prim(material)
-        base = len(p["pos"])
-        p["pos"] += [a, b, c]
-        p["nrm"] += [n, n, n]
-        p["uv"] += uvs or [(0, 0)] * 3
-        p["idx"] += [base, base + 1, base + 2]
+        for v in (a, b, c):
+            if (v, n) not in p["seen"]:
+                p["seen"][v, n] = len(p["pos"])
+                p["pos"].append(v)
+                if n is not None:
+                    p["nrm"].append(n)
+            p["idx"].append(p["seen"][v, n])
 
-    def quad(self, material, a, b, c, d, n):
+    def quad(self, material, a, b, c, d, n=None):
         self.tri(material, a, b, c, n)
         self.tri(material, a, c, d, n)
 
 
-def cap(mb, material, polygons, z, flip):
+def cap(mb, material, polygons, z, lit):
     for outer, holes in polygons:
         verts = outer + [p for h in holes for p in h]
         ring_ends = []
@@ -139,10 +143,9 @@ def cap(mb, material, polygons, z, flip):
         for t in range(0, len(idx), 3):
             a, b, c = (verts[idx[t]], verts[idx[t + 1]], verts[idx[t + 2]])
             area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])
-            if (area < 0) != flip:
+            if area < 0:
                 b, c = c, b
-            n = (0, 0, -1 if flip else 1)
-            mb.tri(material, (a[0], a[1], z), (b[0], b[1], z), (c[0], c[1], z), n)
+            mb.tri(material, (a[0], a[1], z), (b[0], b[1], z), (c[0], c[1], z), (0, 0, 1) if lit else None)
 
 
 def walls(mb, material, rings, z_top, z_bottom):
@@ -156,9 +159,9 @@ def walls(mb, material, rings, z_top, z_bottom):
             mb.quad(material, (p[0], p[1], z_top), (p[0], p[1], z_bottom), (q[0], q[1], z_bottom), (q[0], q[1], z_top), nrm)
 
 
-def face_mesh(polygons, z):
+def face_mesh(polygons, z, lit=False):
     mb = MeshBuilder()
-    cap(mb, 0, polygons, z, flip=False)
+    cap(mb, 0, polygons, z, lit)
     return mb
 
 
@@ -191,7 +194,7 @@ def slab_meshes(ring, depth, chamfer):
     """Convex ring only: an inset front face, and straight sides (material 0) with 45-degree bevels (1)."""
     h = depth / 2
     inner = inset_convex(ring, chamfer)
-    face = face_mesh([(inner, [])], h)
+    face = face_mesh([(inner, [])], h, lit=True)
     sides = MeshBuilder()
     walls(sides, 0, [ring], h - chamfer, -h + chamfer)
     n = len(ring)
@@ -206,16 +209,15 @@ def slab_meshes(ring, depth, chamfer):
     return face, sides
 
 
-def uv_sphere(radius, material, stacks=48, slices=96):
+def hemisphere(radius, material, stacks=24, slices=48):
+    """The front half of a UV sphere (longitude -90 to 90), u running across the half map."""
     mb = MeshBuilder()
     p = mb.prim(material)
     for stack in range(stacks + 1):
         lat = math.pi / 2 - math.pi * stack / stacks
         for slice_ in range(slices + 1):
-            lon = 2 * math.pi * slice_ / slices - math.pi
-            d = (math.cos(lat) * math.sin(lon), math.sin(lat), math.cos(lat) * math.cos(lon))
-            p["pos"].append(tuple(c * radius for c in d))
-            p["nrm"].append(d)
+            lon = math.pi * slice_ / slices - math.pi / 2
+            p["pos"].append((radius * math.cos(lat) * math.sin(lon), radius * math.sin(lat), radius * math.cos(lat) * math.cos(lon)))
             p["uv"].append((slice_ / slices, stack / stacks))
     stride = slices + 1
     for stack in range(stacks):
@@ -226,7 +228,7 @@ def uv_sphere(radius, material, stacks=48, slices=96):
     return mb
 
 
-def disc_mesh(falloff, rings=64, segments=64):
+def disc_mesh(falloff, rings=32, segments=48):
     """A unit disc facing +z whose vertex alpha falls off as (1 - r)^falloff, interpolated per fragment."""
     pos, col, idx = [(0.0, 0.0, 0.0)], [(1.0, 1.0, 1.0, 1.0)], []
     for k in range(1, rings + 1):
@@ -246,7 +248,7 @@ def disc_mesh(falloff, rings=64, segments=64):
             else:
                 idx += [v(k - 1, s), v(k, s), v(k, s + 1), v(k - 1, s), v(k, s + 1), v(k - 1, s + 1)]
     mb = MeshBuilder()
-    mb.prims[0] = {"pos": pos, "nrm": [(0.0, 0.0, 1.0)] * len(pos), "uv": [], "col": col, "idx": idx}
+    mb.prims[0] = {"pos": pos, "uv": [], "col": col, "idx": idx}
     return mb
 
 
@@ -275,17 +277,17 @@ def write_glb(path, name, mb, materials, image_png=None):
     primitives = []
     for material, p in sorted(mb.prims.items()):
         pos = np.array(p["pos"], dtype=np.float32)
-        attrs = {
-            "POSITION": accessor(pos.tobytes(), 5126, "VEC3", len(pos), 34962, (pos.min(0).tolist(), pos.max(0).tolist())),
-            "NORMAL": accessor(np.array(p["nrm"], dtype=np.float32).tobytes(), 5126, "VEC3", len(pos), 34962),
-        }
+        assert len(pos) < 65536
+        attrs = {"POSITION": accessor(pos.tobytes(), 5126, "VEC3", len(pos), 34962, (pos.min(0).tolist(), pos.max(0).tolist()))}
+        if p.get("nrm"):
+            attrs["NORMAL"] = accessor(np.array(p["nrm"], dtype=np.float32).tobytes(), 5126, "VEC3", len(pos), 34962)
         if image_png is not None:
             attrs["TEXCOORD_0"] = accessor(np.array(p["uv"], dtype=np.float32).tobytes(), 5126, "VEC2", len(pos), 34962)
         if p.get("col"):
             col = np.rint(np.array(p["col"], dtype=np.float64) * 65535).astype(np.uint16)
             attrs["COLOR_0"] = accessor(col.tobytes(), 5123, "VEC4", len(pos), 34962, normalized=True)
-        idx = np.array(p["idx"], dtype=np.uint32)
-        primitives.append({"attributes": attrs, "indices": accessor(idx.tobytes(), 5125, "SCALAR", len(idx), 34963), "material": material})
+        idx = np.array(p["idx"], dtype=np.uint16)
+        primitives.append({"attributes": attrs, "indices": accessor(idx.tobytes(), 5123, "SCALAR", len(idx), 34963), "material": material})
 
     gltf = {
         "asset": {"version": "2.0", "generator": "gen_launch_assets.py"},
@@ -331,24 +333,21 @@ def glossy(name, rgb, roughness, self_lit=0.0):
 # --- sun ------------------------------------------------------------------
 
 def unwrap_table():
-    w, h = SUN_MAP_SIZE, SUN_MAP_SIZE // 2
-    rows = (np.arange(h) + 0.5) / h
-    cols = (np.arange(w) + 0.5) / w
-    lat = math.pi / 2 - math.pi * rows[:, None]
-    lon = 2 * math.pi * cols[None, :] - math.pi
+    steps = (np.arange(SUN_MAP_SIZE) + 0.5) / SUN_MAP_SIZE
+    lat = math.pi / 2 - math.pi * steps[:, None]
+    lon = math.pi * steps[None, :] - math.pi / 2
     east = np.cos(lat) * np.sin(lon)
     north = np.sin(lat) * np.ones_like(lon)
-    toward = np.cos(lat) * np.cos(lon)
     across = np.rint(SUN_ART_CENTER[0] + east * SUN_ART_RADIUS).astype(int)
     down = np.rint(SUN_ART_CENTER[1] - north * SUN_ART_RADIUS).astype(int)
-    return toward >= 0, across, down
+    return across, down
 
 
 def unwrap(art_rgba, table):
-    front, across, down = table
+    across, down = table
     ah, aw = art_rgba.shape[:2]
-    ok = front & (across >= 0) & (across < aw) & (down >= 0) & (down < ah)
-    out = np.zeros((SUN_MAP_SIZE // 2, SUN_MAP_SIZE, 4), dtype=np.uint8)
+    ok = (across >= 0) & (across < aw) & (down >= 0) & (down < ah)
+    out = np.zeros((SUN_MAP_SIZE, SUN_MAP_SIZE, 4), dtype=np.uint8)
     out[ok] = art_rgba[down[ok], across[ok]]
     return out
 
@@ -417,8 +416,9 @@ def main(assets_dir, out_dir):
             seen[key] = len(unique)
             unique.append(png)
         mapping.append(seen[key])
-    for k, png in enumerate(unique):
-        Image.fromarray(png, "RGBA").save(textures / f"sun_{k:02d}.png", optimize=True)
+    strip = Image.fromarray(np.concatenate(unique), "RGBA").quantize(256, method=Image.Quantize.FASTOCTREE)
+    for k in range(len(unique)):
+        strip.crop((0, k * SUN_MAP_SIZE, SUN_MAP_SIZE, (k + 1) * SUN_MAP_SIZE)).save(textures / f"sun_{k:02d}.png", optimize=True)
     print(f"sun: {len(frames)} frames, {len(unique)} unique textures")
     print("sunFrameTexture = intArrayOf(" + ", ".join(map(str, mapping)) + ")")
 
@@ -427,7 +427,7 @@ def main(assets_dir, out_dir):
     last.save(buf, format="PNG")
     sun_material = {"name": "swoosh", "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1], "baseColorTexture": {"index": 0}, "metallicFactor": 0, "roughnessFactor": 1},
                     "alphaMode": "BLEND", "doubleSided": False, "extensions": {"KHR_materials_unlit": {}}}
-    write_glb(models / "launch_sun.glb", "sun", uv_sphere(LOGO_WIDTH * SUN_ART_RADIUS / space_w, 0), [sun_material], buf.getvalue())
+    write_glb(models / "launch_sun.glb", "sun", hemisphere(LOGO_WIDTH * SUN_ART_RADIUS / space_w, 0), [sun_material], buf.getvalue())
 
 
 if __name__ == "__main__":
