@@ -46,6 +46,7 @@ private const val SLAB_FLASH_END = 0.4f
 
 private const val START_DELAY_MS = 300L
 private const val FADE_OUT = 0.28f
+private const val MAX_FRAME_STEP = 1f / 30f
 
 /** Which unwrapped sun texture each of the 61 authored frames shows; -1 while the swoosh is still blank. */
 private val SUN_FRAME_TEXTURE = IntArray(61) { if (it < 13) -1 else it - 13 }
@@ -68,18 +69,25 @@ fun SpatialLaunch(ready: Boolean, onFinished: () -> Unit) {
     var scene by remember { mutableStateOf<LaunchScene?>(null) }
 
     LaunchedEffect(session) { scene = LaunchScene.load(session, root) }
-    DisposableEffect(root) { onDispose { scene?.close(); root.dispose() } }
+    // Entities first: Compose-XR only detaches an adopted entity, and Impress crashes at session
+    // destroy when live entities outlive their closed materials.
+    DisposableEffect(root) { onDispose { root.dispose(); scene?.close() } }
 
     LaunchedEffect(scene) {
         val parts = scene ?: return@LaunchedEffect
         delay(START_DELAY_MS)
         val player = MediaPlayer.create(context, R.raw.rbtv_launch_sound)
         try {
-            val start = withFrameNanos { it }
+            var last = withFrameNanos { it }
             player?.start()
+            var t = 0f
             var fadeStart = -1f
             while (true) {
-                val t = (withFrameNanos { it } - start) / 1e9f
+                // A stalled frame advances the clock by at most one sun frame: the home screen composing
+                // behind the launch blocks the main thread, and jumping ahead pops the sun and letters.
+                val now = withFrameNanos { it }
+                t += min((now - last) / 1e9f, MAX_FRAME_STEP)
+                last = now
                 if (fadeStart < 0f && isReady && t >= LaunchTimeline.DURATION) fadeStart = t
                 val fade = (if (fadeStart < 0f) min(1f, t / LaunchTimeline.FADE_IN) else 1f - (t - fadeStart) / FADE_OUT).coerceIn(0f, 1f)
                 parts.apply(t, fade)
@@ -164,11 +172,11 @@ private class LaunchScene(
 
     fun apply(t: Float, fade: Float) {
         setOpacity(fade)
+        slabFront.setEmissiveFactor(SLAB_RED.color * (0.3f + 1.1f * LaunchTimeline.slabFlash(t)))
         val fading = fade < 1f
         markOverrides.forEach { it.wear(fading) }
         slabOverrides.forEach { it.wear(fading || t < SLAB_FLASH_END) }
         slab.apply(LaunchTimeline.slab(t))
-        slabFront.setEmissiveFactor(SLAB_RED.color * (0.3f + 1.1f * LaunchTimeline.slabFlash(t)))
 
         val mark = LaunchTimeline.logo(t)
         logo.setScale(mark.scale)
@@ -218,7 +226,6 @@ private class LaunchScene(
     }
 
     fun close() {
-        sunTextures.forEach { it.close() }
         sunMaterial.close()
         glowMaterials.forEach { it.second.close() }
         tinted.forEach { (_, material) ->
@@ -227,11 +234,13 @@ private class LaunchScene(
                 is KhronosPbrMaterial -> material.close()
             }
         }
+        sunTextures.forEach { it.close() }
         models.forEach { it.close() }
     }
 
     companion object {
         suspend fun load(session: Session, root: Entity): LaunchScene = coroutineScope {
+            root.setEnabled(false)
             // Materials are created one at a time and before anything else; concurrent creation aborts
             // Impress with an unknown instance id.
             val faceWhite = KhronosUnlitMaterial.create(session, AlphaMode.BLEND)
@@ -276,12 +285,7 @@ private class LaunchScene(
                 Overrides(entities[4], listOf(sideRed)), Overrides(entities[5], listOf(faceRed)),
                 Overrides(entities[6], listOf(sideWhite)), Overrides(entities[7], listOf(faceWhite)),
             )
-            (slabOverrides + markOverrides).forEach { it.wear(true) }
-            glow.forEachIndexed { i, disc ->
-                disc.nodes.forEach { it.setMaterialOverride(glowMaterials[LaunchGlow.materialOf(i)].second) }
-            }
-
-            LaunchScene(
+            val scene = LaunchScene(
                 models = (models + aurora + bloom).map { it.await() },
                 logo = logo,
                 slab = Part(entities[0], entities[1]),
@@ -301,8 +305,21 @@ private class LaunchScene(
                 ),
                 slabOverrides = slabOverrides,
                 markOverrides = markOverrides,
-            ).also { it.apply(0f, 0f) }
+            )
+            // Impress aborts when overrides or material writes reach the renderer while it is still
+            // instancing the models under load; two frames let each batch flush first.
+            settle()
+            (slabOverrides + markOverrides).forEach { it.wear(true) }
+            glow.forEachIndexed { i, disc ->
+                disc.nodes.forEach { it.setMaterialOverride(glowMaterials[LaunchGlow.materialOf(i)].second) }
+            }
+            settle()
+            scene.apply(0f, 0f)
+            root.setEnabled(true)
+            scene
         }
+
+        private suspend fun settle() = repeat(2) { withFrameNanos {} }
 
         private suspend fun lit(session: Session, shade: Shade) =
             KhronosPbrMaterial.create(session, AlphaMode.BLEND).apply {
