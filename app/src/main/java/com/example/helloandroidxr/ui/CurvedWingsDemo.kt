@@ -75,7 +75,7 @@ fun CurvedWingsDemo() {
 }
 
 @Composable
-private fun HeroCard(show: Show, index: Int) {
+internal fun HeroCard(show: Show, index: Int) {
     Box(
         Modifier
             .fillMaxSize()
@@ -95,7 +95,7 @@ private fun HeroCard(show: Show, index: Int) {
 
 // Clickable Surface with the panel's corner radius: the system gaze highlight follows this shape.
 @Composable
-private fun WingCard(show: Show, onClick: () -> Unit) {
+internal fun WingCard(show: Show, onClick: () -> Unit) {
     Surface(onClick = onClick, shape = RoundedCornerShape(32.dp), modifier = Modifier.fillMaxSize()) {
         Box(Modifier.background(Brush.linearGradient(show.colors))) {
             Text(
@@ -121,9 +121,9 @@ private fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {
     }
 }
 
-private data class Show(val title: String, val meta: String, val colors: List<Color>)
+internal data class Show(val title: String, val meta: String, val colors: List<Color>)
 
-private val shows = listOf(
+internal val shows = listOf(
     Show("Ridge Line", "Documentary · 52 min · 2022", listOf(Color(0xFF0B1F2A), Color(0xFF1E5631))),
     Show("Pit Wall", "Series · 8 episodes", listOf(Color(0xFF1B2A6B), Color(0xFFC9A227))),
     Show("Deep Water", "Film · 1 h 34 min · 2024", listOf(Color(0xFF02242F), Color(0xFF1F8A9E))),

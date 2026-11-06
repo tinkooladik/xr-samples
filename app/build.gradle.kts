@@ -21,7 +21,7 @@ plugins {
 
 android {
     namespace = "com.example.helloandroidxr"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.redbull.xrsandbox"
@@ -60,6 +60,7 @@ dependencies {
     implementation(libs.androidx.arcore)
     implementation(libs.androidx.scenecore)
     implementation(libs.androidx.compose)
+    implementation(libs.androidx.glimmer)
     compileOnly(libs.androidx.extensions.xr) //This is necessary for Proguard minification
 
     implementation(libs.material)
