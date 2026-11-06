@@ -6,6 +6,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.FocusInteraction
 import androidx.compose.foundation.interaction.HoverInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -17,8 +18,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -89,10 +92,6 @@ enum class Skin(val label: String) {
 /** [CurvedWingsDemo]'s layout with a skin switch, to compare Material and Glimmer in the headset. */
 @Composable
 fun GlimmerWingsDemo() {
-    if (!LocalSpatialCapabilities.current.isSpatialUiEnabled) {
-        CurvedWingsDemo()
-        return
-    }
     var current by remember { mutableIntStateOf(0) }
     var skin by remember { mutableStateOf(Skin.Glimmer) }
     val previous = (current - 1).mod(shows.size)
@@ -104,7 +103,17 @@ fun GlimmerWingsDemo() {
         else -> Colors()
     }
     GlimmerTheme(colors = colors) {
-        Subspace {
+        if (!LocalSpatialCapabilities.current.isSpatialUiEnabled) {
+            // No insets padding above the hero: [frosted] needs its backdrop at the root's origin.
+            Column(Modifier.fillMaxSize().background(Color.Black)) {
+                Box(Modifier.weight(1f)) { Hero(skin, current) }
+                SkinPicker(
+                    skin,
+                    onPick = { skin = it },
+                    Modifier.navigationBarsPadding().horizontalScroll(rememberScrollState()).padding(16.dp),
+                )
+            }
+        } else Subspace {
             SpatialCurvedRow(
                 curveRadius = 1000.dp,
                 horizontalArrangement = SpatialArrangement.spacedBy(24.dp),
@@ -113,12 +122,7 @@ fun GlimmerWingsDemo() {
                     Wing(skin, shows[previous], onClick = { current = previous })
                 }
                 SpatialPanel(SubspaceModifier.size(width = 900.dp, height = 500.dp)) {
-                    when (skin) {
-                        Skin.Material -> HeroCard(shows[current], index = current)
-                        Skin.Clear -> ClearHero(shows[current])
-                        Skin.MaterialGlass -> MaterialGlassHero(shows[current])
-                        else -> GlimmerHero(shows[current], glass = skin == Skin.Glass)
-                    }
+                    Hero(skin, current)
                     Orbiter(position = ContentEdge.Top, offset = 16.dp, alignment = Alignment.End) {
                         EnvironmentControls()
                     }
@@ -131,6 +135,16 @@ fun GlimmerWingsDemo() {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun Hero(skin: Skin, index: Int) {
+    when (skin) {
+        Skin.Material -> HeroCard(shows[index], index = index)
+        Skin.Clear -> ClearHero(shows[index])
+        Skin.MaterialGlass -> MaterialGlassHero(shows[index])
+        else -> GlimmerHero(shows[index], glass = skin == Skin.Glass)
     }
 }
 
@@ -312,8 +326,8 @@ internal fun Modifier.frosted(backdrop: GraphicsLayer?, shape: Shape): Modifier 
 }
 
 @Composable
-private fun SkinPicker(skin: Skin, onPick: (Skin) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun SkinPicker(skin: Skin, onPick: (Skin) -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Skin.entries.forEach {
             ToggleButton(
                 checked = it == skin,
